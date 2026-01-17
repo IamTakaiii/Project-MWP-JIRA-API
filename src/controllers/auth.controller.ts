@@ -21,14 +21,14 @@ export class AuthController {
     return SessionService.createSession({ jiraUrl, email, apiToken })
   }
 
-  getSessionInfo(cookie: CookieRecord): MeResponse {
+  async getSessionInfo(cookie: CookieRecord): Promise<MeResponse> {
     const sessionId = getSessionIdFromCookie(cookie)
 
-    if (!sessionId || !SessionService.hasSession(sessionId)) {
+    if (!sessionId || !(await SessionService.hasSession(sessionId))) {
       return { authenticated: false }
     }
 
-    const credentials = SessionService.getCredentials(sessionId)
+    const credentials = await SessionService.getCredentials(sessionId)
     if (!credentials) {
       return { authenticated: false }
     }
@@ -37,14 +37,14 @@ export class AuthController {
       authenticated: true,
       jiraUrl: credentials.jiraUrl,
       email: credentials.email,
-      sessionInfo: SessionService.getSessionInfo(sessionId),
+      sessionInfo: await SessionService.getSessionInfo(sessionId),
     }
   }
 
-  logout(cookie: CookieRecord): void {
+  async logout(cookie: CookieRecord): Promise<void> {
     const sessionId = getSessionIdFromCookie(cookie)
     if (sessionId) {
-      SessionService.deleteSession(sessionId)
+      await SessionService.deleteSession(sessionId)
     }
   }
 }

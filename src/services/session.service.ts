@@ -16,8 +16,8 @@ const CLEANUP_INTERVAL_MS = 60 * 60 * 1000
 log.info('Session service initialized with Drizzle ORM')
 
 class SessionRepository {
-  create(sessionId: string, credentials: JiraCredentials, timestamp: Date): void {
-    db.insert(sessions)
+  async create(sessionId: string, credentials: JiraCredentials, timestamp: Date): Promise<void> {
+    await db.insert(sessions)
       .values({
         sessionId,
         jiraUrl: credentials.jiraUrl,
@@ -26,46 +26,42 @@ class SessionRepository {
         createdAt: timestamp,
         lastAccessed: timestamp,
       })
-      .run()
   }
 
-  findById(sessionId: string): Session | undefined {
+  async findById(sessionId: string): Promise<Session | undefined> {
     return db.select()
       .from(sessions)
       .where(eq(sessions.sessionId, sessionId))
       .get()
   }
 
-  updateLastAccessed(sessionId: string, timestamp: Date): void {
-    db.update(sessions)
+  async updateLastAccessed(sessionId: string, timestamp: Date): Promise<void> {
+    await db.update(sessions)
       .set({ lastAccessed: timestamp })
       .where(eq(sessions.sessionId, sessionId))
-      .run()
   }
 
-  delete(sessionId: string): void {
-    db.delete(sessions)
+  async delete(sessionId: string): Promise<void> {
+    await db.delete(sessions)
       .where(eq(sessions.sessionId, sessionId))
-      .run()
   }
 
-  deleteExpired(maxIdleTime: Date, maxAge: Date): number {
-    const beforeCount = this.count()
+  async deleteExpired(maxIdleTime: Date, maxAge: Date): Promise<number> {
+    const beforeCount = await this.count()
 
-    db.delete(sessions)
+    await db.delete(sessions)
       .where(
         or(
           lt(sessions.lastAccessed, maxIdleTime),
           lt(sessions.createdAt, maxAge)
         )
       )
-      .run()
 
-    return beforeCount - this.count()
+    return beforeCount - await this.count()
   }
 
-  count(): number {
-    const result = db.select({ count: sql<number>`count(*)` })
+  async count(): Promise<number> {
+    const result = await db.select({ count: sql<number>`count(*)` })
       .from(sessions)
       .get()
     return result?.count ?? 0
@@ -113,11 +109,11 @@ class SessionManager {
     private idGenerator: SessionIdGenerator
   ) {}
 
-  createSession(credentials: JiraCredentials): string {
+  async createSession(credentials: JiraCredentials): Promise<string> {
     const sessionId = this.idGenerator.generate()
     const now = new Date()
 
-    this.repository.create(sessionId, credentials, now)
+    await this.repository.create(sessionId, credentials, now)
 
     log.info(
       { sessionId, jiraUrl: credentials.jiraUrl, email: credentials.email },
@@ -127,54 +123,54 @@ class SessionManager {
     return sessionId
   }
 
-  getCredentials(sessionId: string): JiraCredentials | null {
-    const session = this.getValidSession(sessionId)
+  async getCredentials(sessionId: string): Promise<JiraCredentials | null> {
+    const session = await this.getValidSession(sessionId)
     return session ? this.mapper.toCredentials(session) : null
   }
 
-  deleteSession(sessionId: string): void {
-    this.repository.delete(sessionId)
+  async deleteSession(sessionId: string): Promise<void> {
+    await this.repository.delete(sessionId)
     log.info({ sessionId }, 'Session deleted')
   }
 
-  hasSession(sessionId: string): boolean {
-    return this.getValidSession(sessionId) !== null
+  async hasSession(sessionId: string): Promise<boolean> {
+    return (await this.getValidSession(sessionId)) !== null
   }
 
-  getSessionInfo(sessionId: string): SessionInfo | null {
-    const session = this.repository.findById(sessionId)
+  async getSessionInfo(sessionId: string): Promise<SessionInfo | null> {
+    const session = await this.repository.findById(sessionId)
     return session ? this.mapper.toSessionInfo(session, Date.now()) : null
   }
 
-  getSessionCount(): number {
+  async getSessionCount(): Promise<number> {
     return this.repository.count()
   }
 
-  cleanupExpired(): void {
+  async cleanupExpired(): Promise<void> {
     const now = Date.now()
     const maxIdleTime = new Date(now - SESSION_IDLE_TIMEOUT_MS)
     const maxAge = new Date(now - SESSION_TTL_MS)
 
-    const cleaned = this.repository.deleteExpired(maxIdleTime, maxAge)
+    const cleaned = await this.repository.deleteExpired(maxIdleTime, maxAge)
 
     if (cleaned > 0) {
       log.debug({ cleaned }, 'Cleaned up expired sessions')
     }
   }
 
-  private getValidSession(sessionId: string): Session | null {
-    const session = this.repository.findById(sessionId)
+  private async getValidSession(sessionId: string): Promise<Session | null> {
+    const session = await this.repository.findById(sessionId)
     if (!session) return null
 
     const now = Date.now()
 
     if (this.validator.isExpired(session, now)) {
-      this.repository.delete(sessionId)
+      await this.repository.delete(sessionId)
       log.debug({ sessionId }, 'Session expired')
       return null
     }
 
-    this.repository.updateLastAccessed(sessionId, new Date(now))
+    await this.repository.updateLastAccessed(sessionId, new Date(now))
     return session
   }
 }

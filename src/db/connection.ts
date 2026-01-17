@@ -1,18 +1,20 @@
-import { Database } from 'bun:sqlite'
-import { drizzle } from 'drizzle-orm/bun-sqlite'
+import { createClient } from '@libsql/client'
+import { drizzle } from 'drizzle-orm/libsql'
 import * as schema from './schema'
 import { createLogger } from '@/lib'
 
 const log = createLogger('Database')
 
-const sqlite = new Database('sessions.db', { create: true })
+const client = createClient({
+  url: 'file:sessions.db',
+})
 
-export const db = drizzle(sqlite, { schema })
+export const db = drizzle(client, { schema })
 
-log.info('Drizzle ORM initialized with Bun SQLite')
+log.info('Drizzle ORM initialized with libSQL')
 
 process.on('SIGINT', () => {
-  sqlite.close()
+  client.close()
   log.info('Database connection closed')
   process.exit(0)
 })

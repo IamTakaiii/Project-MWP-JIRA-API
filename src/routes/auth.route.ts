@@ -35,7 +35,7 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
   )
   .get(
     '/me',
-    ({ cookie }): MeResponse => controller.getSessionInfo(cookie as CookieRecord),
+    async ({ cookie }): Promise<MeResponse> => controller.getSessionInfo(cookie as CookieRecord),
     {
       detail: {
         summary: 'Get current session',
@@ -46,8 +46,8 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
   )
   .post(
     '/logout',
-    ({ cookie, set }) => {
-      controller.logout(cookie as CookieRecord)
+    async ({ cookie, set }) => {
+      await controller.logout(cookie as CookieRecord)
       set.headers['Set-Cookie'] = buildClearSessionCookie()
 
       return { success: true, message: 'Logout successful' }

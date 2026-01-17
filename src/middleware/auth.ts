@@ -5,7 +5,7 @@ import type { JiraCredentials } from '@/types'
 
 const log = createLogger('AuthMiddleware')
 
-export function getCredentialsFromCookie(cookie: CookieRecord): JiraCredentials {
+export async function getCredentialsFromCookie(cookie: CookieRecord): Promise<JiraCredentials> {
   const sessionId = getSessionIdFromCookie(cookie)
 
   log.debug({
@@ -18,7 +18,7 @@ export function getCredentialsFromCookie(cookie: CookieRecord): JiraCredentials 
     throw new AuthenticationError('No session found. Please login first.')
   }
 
-  const credentials = SessionService.getCredentials(sessionId)
+  const credentials = await SessionService.getCredentials(sessionId)
   if (!credentials) {
     log.warn({ sessionId }, 'Session expired or invalid')
     throw new AuthenticationError('Session expired. Please login again.')
