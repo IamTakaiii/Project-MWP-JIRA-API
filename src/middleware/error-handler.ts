@@ -30,12 +30,25 @@ function buildErrorResponse(
 }
 
 /**
+ * Type guard to check if error is AppError-like
+ */
+function isAppError(error: unknown): error is AppError {
+  if (error instanceof AppError) return true
+  // Fallback: check by properties (for cases where instanceof fails across module boundaries)
+  if (isErrorLike(error)) {
+    const e = error as unknown as Record<string, unknown>
+    return typeof e['statusCode'] === 'number' && typeof e['code'] === 'string'
+  }
+  return false
+}
+
+/**
  * Global error handling middleware
  */
 export const errorHandlerMiddleware = new Elysia({ name: 'error-handler' }).onError(
   ({ error, set }): ErrorResponse => {
-    // Handle AppError instances
-    if (error instanceof AppError) {
+    // Handle AppError instances (including cross-module boundary cases)
+    if (isAppError(error)) {
       set.status = error.statusCode
       return buildErrorResponse(
         error.code,
