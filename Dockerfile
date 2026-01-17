@@ -37,4 +37,4 @@ EXPOSE 3001
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
   CMD wget -q --spider http://localhost:3001/api/health/live || exit 1
 
-CMD ["bun", "run", "src/index.ts"]
+CMD ["sh", "-c", "bun run db:migrate && bun run src/index.ts"]
