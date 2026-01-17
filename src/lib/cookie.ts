@@ -14,8 +14,11 @@ export function getSessionIdFromCookie(cookie: CookieRecord): string | undefined
 }
 
 export function buildSessionCookie(sessionId: string, maxAge: number): string {
+  // For cross-origin requests (frontend on different domain), use SameSite=None with Secure
+  // For same-origin, SameSite=Lax is sufficient
+  const sameSite = env.isProd ? 'None' : 'Lax'
   const secureFlag = env.isProd ? 'Secure;' : ''
-  return `${JIRA_SESSION_COOKIE}=${sessionId}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}; ${secureFlag}`
+  return `${JIRA_SESSION_COOKIE}=${sessionId}; HttpOnly; SameSite=${sameSite}; Path=/; Max-Age=${maxAge}; ${secureFlag}`
 }
 
 export function buildClearSessionCookie(): string {
