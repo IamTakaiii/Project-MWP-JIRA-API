@@ -1,8 +1,9 @@
-import { Database } from 'bun:sqlite'
 import { createLogger } from '@/lib'
 import { randomBytes } from 'crypto'
 import type { JiraCredentials } from '@/types'
 import { env } from '@/config'
+import { db, sessions, type Session } from '@/db'
+import { eq, or, lt, sql } from 'drizzle-orm'
 
 const log = createLogger('SessionService')
 
@@ -12,38 +13,9 @@ const SESSION_IDLE_TIMEOUT_MS = env.SESSION_IDLE_DAYS * 24 * 60 * 60 * 1000
 const SESSION_ID_LENGTH = 32
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000 // 1 hour
 
-// Initialize SQLite database
-const db = new Database('sessions.db')
+log.info('Session service initialized with Drizzle ORM')
 
-// Create sessions table if not exists
-db.run(`
-  CREATE TABLE IF NOT EXISTS sessions (
-    session_id TEXT PRIMARY KEY,
-    jira_url TEXT NOT NULL,
-    email TEXT NOT NULL,
-    api_token TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    last_accessed INTEGER NOT NULL
-  )
-`)
 
-// Create index for faster cleanup queries
-db.run(`
-  CREATE INDEX IF NOT EXISTS idx_sessions_last_accessed 
-  ON sessions(last_accessed)
-`)
-
-log.info('SQLite session store initialized')
-
-/** Session database row structure */
-interface SessionRow {
-  session_id: string
-  jira_url: string
-  email: string
-  api_token: string
-  created_at: number
-  last_accessed: number
-}
 
 /** Session info returned to clients */
 export interface SessionInfo {
@@ -61,41 +33,40 @@ function generateSessionId(): string {
   return randomBytes(SESSION_ID_LENGTH).toString('hex')
 }
 
-function isSessionExpired(row: SessionRow, now: number): boolean {
-  const idleTime = now - row.last_accessed
-  const totalAge = now - row.created_at
+function isSessionExpired(session: Session, now: number): boolean {
+  const idleTime = now - session.lastAccessed.getTime()
+  const totalAge = now - session.createdAt.getTime()
   return idleTime > SESSION_IDLE_TIMEOUT_MS || totalAge > SESSION_TTL_MS
 }
 
-function deleteSessionById(sessionId: string): boolean {
-  const result = db.run('DELETE FROM sessions WHERE session_id = ?', [sessionId])
-  return result.changes > 0
+function updateLastAccessed(sessionId: string, now: Date): void {
+  db.update(sessions)
+    .set({ lastAccessed: now })
+    .where(eq(sessions.sessionId, sessionId))
+    .run()
 }
 
-function updateLastAccessed(sessionId: string, now: number): void {
-  db.run('UPDATE sessions SET last_accessed = ? WHERE session_id = ?', [now, sessionId])
+function getSessionRow(sessionId: string): Session | undefined {
+  return db.select()
+    .from(sessions)
+    .where(eq(sessions.sessionId, sessionId))
+    .get()
 }
 
-function getSessionRow(sessionId: string): SessionRow | null {
-  return db.query<SessionRow, [string]>(
-    'SELECT * FROM sessions WHERE session_id = ?'
-  ).get(sessionId) ?? null
-}
-
-function rowToCredentials(row: SessionRow): JiraCredentials {
+function rowToCredentials(session: Session): JiraCredentials {
   return {
-    jiraUrl: row.jira_url,
-    email: row.email,
-    apiToken: row.api_token,
+    jiraUrl: session.jiraUrl,
+    email: session.email,
+    apiToken: session.apiToken,
   }
 }
 
-function rowToSessionInfo(row: SessionRow, now: number): SessionInfo {
+function rowToSessionInfo(session: Session, now: number): SessionInfo {
   return {
-    createdAt: row.created_at,
-    lastAccessed: row.last_accessed,
-    age: now - row.created_at,
-    idleTime: now - row.last_accessed,
+    createdAt: session.createdAt.getTime(),
+    lastAccessed: session.lastAccessed.getTime(),
+    age: now - session.createdAt.getTime(),
+    idleTime: now - session.lastAccessed.getTime(),
   }
 }
 
@@ -103,35 +74,54 @@ function rowToSessionInfo(row: SessionRow, now: number): SessionInfo {
  * Get valid session row with expiration check and sliding window update
  * @returns Valid session row or null if not found/expired
  */
-function getValidSessionRow(sessionId: string): SessionRow | null {
-  const row = getSessionRow(sessionId)
-  if (!row) return null
+function getValidSessionRow(sessionId: string): Session | null {
+  const session = getSessionRow(sessionId)
+  if (!session) return null
 
   const now = Date.now()
 
-  if (isSessionExpired(row, now)) {
-    deleteSessionById(sessionId)
+  if (isSessionExpired(session, now)) {
+    db.delete(sessions)
+      .where(eq(sessions.sessionId, sessionId))
+      .run()
     log.debug({ sessionId }, 'Session expired')
     return null
   }
 
   // Sliding expiration: update last accessed time
-  updateLastAccessed(sessionId, now)
-  return row
+  updateLastAccessed(sessionId, new Date(now))
+  return session
 }
 
 function cleanupExpiredSessions(): void {
   const now = Date.now()
-  const maxIdleTime = now - SESSION_IDLE_TIMEOUT_MS
-  const maxAge = now - SESSION_TTL_MS
+  const maxIdleTime = new Date(now - SESSION_IDLE_TIMEOUT_MS)
+  const maxAge = new Date(now - SESSION_TTL_MS)
 
-  const result = db.run(
-    'DELETE FROM sessions WHERE last_accessed < ? OR created_at < ?',
-    [maxIdleTime, maxAge]
-  )
+  // Count before deletion
+  const beforeResult = db.select({ count: sql<number>`count(*)` })
+    .from(sessions)
+    .get()
+  const beforeCount = beforeResult?.count ?? 0
+  
+  db.delete(sessions)
+    .where(
+      or(
+        lt(sessions.lastAccessed, maxIdleTime),
+        lt(sessions.createdAt, maxAge)
+      )
+    )
+    .run()
 
-  if (result.changes > 0) {
-    log.debug({ cleaned: result.changes }, 'Cleaned up expired sessions')
+  // Count after deletion
+  const afterResult = db.select({ count: sql<number>`count(*)` })
+    .from(sessions)
+    .get()
+  const afterCount = afterResult?.count ?? 0
+  const cleaned = beforeCount - afterCount
+
+  if (cleaned > 0) {
+    log.debug({ cleaned }, 'Cleaned up expired sessions')
   }
 }
 
@@ -151,13 +141,18 @@ export const SessionService = {
    */
   createSession(credentials: JiraCredentials): string {
     const sessionId = generateSessionId()
-    const now = Date.now()
+    const now = new Date()
 
-    db.run(
-      `INSERT INTO sessions (session_id, jira_url, email, api_token, created_at, last_accessed)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [sessionId, credentials.jiraUrl, credentials.email, credentials.apiToken, now, now]
-    )
+    db.insert(sessions)
+      .values({
+        sessionId,
+        jiraUrl: credentials.jiraUrl,
+        email: credentials.email,
+        apiToken: credentials.apiToken,
+        createdAt: now,
+        lastAccessed: now,
+      })
+      .run()
 
     log.info(
       { sessionId, jiraUrl: credentials.jiraUrl, email: credentials.email },
@@ -173,8 +168,8 @@ export const SessionService = {
    * @returns Credentials if session is valid, null otherwise
    */
   getCredentials(sessionId: string): JiraCredentials | null {
-    const row = getValidSessionRow(sessionId)
-    return row ? rowToCredentials(row) : null
+    const session = getValidSessionRow(sessionId)
+    return session ? rowToCredentials(session) : null
   },
 
   /**
@@ -182,9 +177,11 @@ export const SessionService = {
    * @param sessionId - Session ID to delete
    */
   deleteSession(sessionId: string): void {
-    if (deleteSessionById(sessionId)) {
-      log.info({ sessionId }, 'Session deleted')
-    }
+    db.delete(sessions)
+      .where(eq(sessions.sessionId, sessionId))
+      .run()
+    
+    log.info({ sessionId }, 'Session deleted')
   },
 
   /**
@@ -202,8 +199,8 @@ export const SessionService = {
    * @returns Session info or null if not found
    */
   getSessionInfo(sessionId: string): SessionInfo | null {
-    const row = getSessionRow(sessionId)
-    return row ? rowToSessionInfo(row, Date.now()) : null
+    const session = getSessionRow(sessionId)
+    return session ? rowToSessionInfo(session, Date.now()) : null
   },
 
   /**
@@ -211,9 +208,9 @@ export const SessionService = {
    * @returns Number of active sessions
    */
   getSessionCount(): number {
-    const result = db.query<{ count: number }, []>(
-      'SELECT COUNT(*) as count FROM sessions'
-    ).get()
+    const result = db.select({ count: sql<number>`count(*)` })
+      .from(sessions)
+      .get()
     return result?.count ?? 0
   },
 }

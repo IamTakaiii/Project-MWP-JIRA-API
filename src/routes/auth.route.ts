@@ -1,7 +1,6 @@
 import { Elysia } from 'elysia'
 import { createLogger, AuthenticationError } from '@/lib'
 import {
-  JIRA_SESSION_COOKIE,
   getSessionIdFromCookie,
   buildSessionCookie,
   buildClearSessionCookie,
