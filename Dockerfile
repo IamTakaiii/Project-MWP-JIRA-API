@@ -22,6 +22,7 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/src ./src
 COPY --from=builder /app/tsconfig.json ./
 COPY --from=builder /app/drizzle.config.ts ./
+COPY --from=builder /app/drizzle ./drizzle
 
 RUN mkdir -p /app/data && chown -R elysia:nodejs /app
 
@@ -36,4 +37,4 @@ EXPOSE 3001
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
   CMD wget -q --spider http://localhost:3001/api/health/live || exit 1
 
-CMD ["bun", "run", "src/index.ts"]
+CMD ["sh", "-c", "bun run db:push && bun run src/index.ts"]
