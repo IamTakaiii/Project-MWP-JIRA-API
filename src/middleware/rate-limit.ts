@@ -2,15 +2,10 @@ import { Elysia } from 'elysia'
 import { env } from '@/config'
 import { RateLimitError } from '@/lib'
 
-/**
- * Simple in-memory rate limiting store
- * For production with multiple instances, use Redis instead
- */
+
 const rateLimitStore = new Map<string, { count: number; resetTime: number }>()
 
-/**
- * Cleanup expired entries periodically
- */
+
 setInterval(() => {
   const now = Date.now()
   for (const [key, value] of rateLimitStore.entries()) {
@@ -18,11 +13,9 @@ setInterval(() => {
       rateLimitStore.delete(key)
     }
   }
-}, 60_000) // Cleanup every minute
+}, 60_000)
 
-/**
- * Get client identifier from request
- */
+
 function getClientId(request: Request): string {
   // Try to get real IP from headers (for proxied requests)
   const forwarded = request.headers.get('x-forwarded-for')
@@ -38,10 +31,7 @@ function getClientId(request: Request): string {
   return 'unknown'
 }
 
-/**
- * Rate limiting middleware
- * Limits requests per IP address
- */
+
 export const rateLimitMiddleware = new Elysia({ name: 'rate-limit' })
   .onBeforeHandle(({ request, set }) => {
     const clientId = getClientId(request)
@@ -60,7 +50,6 @@ export const rateLimitMiddleware = new Elysia({ name: 'rate-limit' })
 
     entry.count++
 
-    // Set rate limit headers
     set.headers['X-RateLimit-Limit'] = env.RATE_LIMIT_MAX_REQUESTS.toString()
     set.headers['X-RateLimit-Remaining'] = Math.max(
       0,
@@ -68,7 +57,6 @@ export const rateLimitMiddleware = new Elysia({ name: 'rate-limit' })
     ).toString()
     set.headers['X-RateLimit-Reset'] = Math.ceil(entry.resetTime / 1000).toString()
 
-    // Check if limit exceeded
     if (entry.count > env.RATE_LIMIT_MAX_REQUESTS) {
       set.headers['Retry-After'] = Math.ceil(
         (entry.resetTime - now) / 1000

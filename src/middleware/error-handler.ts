@@ -2,9 +2,6 @@ import { Elysia } from 'elysia'
 import { AppError, isErrorLike } from '@/lib'
 import { env } from '@/config'
 
-/**
- * Error response format
- */
 interface ErrorResponse {
   success: false
   error: {
@@ -15,9 +12,6 @@ interface ErrorResponse {
   }
 }
 
-/**
- * Build error response object
- */
 function buildErrorResponse(
   code: string,
   message: string,

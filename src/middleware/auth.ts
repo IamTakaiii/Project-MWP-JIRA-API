@@ -1,20 +1,10 @@
 import { createLogger, AuthenticationError } from '@/lib'
-import {
-  getSessionIdFromCookie,
-  type CookieRecord,
-} from '@/lib/cookie'
+import { getSessionIdFromCookie, type CookieRecord } from '@/lib/cookie'
 import { SessionService } from '@/services/session.service'
 import type { JiraCredentials } from '@/types'
 
 const log = createLogger('AuthMiddleware')
 
-/**
- * Get credentials from session cookie
- * Call this function in route handlers that require authentication
- * @param cookie - Elysia cookie object
- * @returns Valid Jira credentials
- * @throws AuthenticationError if session is invalid or expired
- */
 export function getCredentialsFromCookie(cookie: CookieRecord): JiraCredentials {
   const sessionId = getSessionIdFromCookie(cookie)
 

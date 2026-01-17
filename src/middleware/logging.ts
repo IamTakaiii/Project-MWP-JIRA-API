@@ -1,15 +1,9 @@
 import { Elysia } from 'elysia'
 import { logger, isErrorLike } from '@/lib'
 
-/**
- * Store request start times by request ID
- */
+
 const requestTimings = new WeakMap<Request, number>()
 
-/**
- * Request logging middleware
- * Logs incoming requests and response times
- */
 export const loggingMiddleware = new Elysia({ name: 'logging' })
   .onRequest(({ request }) => {
     requestTimings.set(request, Date.now())

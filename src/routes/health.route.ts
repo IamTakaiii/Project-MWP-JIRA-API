@@ -1,9 +1,6 @@
 import { Elysia } from 'elysia'
 import { env } from '@/config'
 
-/**
- * Health check routes for monitoring and load balancers
- */
 export const healthRoutes = new Elysia({ prefix: '/health' })
   .get('/', () => ({
     status: 'ok',

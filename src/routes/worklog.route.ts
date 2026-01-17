@@ -1,22 +1,16 @@
 import { Elysia, t } from 'elysia'
-import { JiraService } from '@/services'
-import { getCredentialsFromCookie } from '@/middleware'
 import { WorklogPayloadSchema } from '@/types'
 import type { CookieRecord } from '@/lib/cookie'
+import { WorklogController } from '@/controllers'
 
-/**
- * Worklog management routes (requires authentication)
- */
+const controller = new WorklogController()
+
 export const worklogRoutes = new Elysia({ prefix: '/worklog' })
-  /**
-   * Create a new worklog entry
-   */
   .post(
     '/',
     async ({ body, cookie }) => {
-      const credentials = getCredentialsFromCookie(cookie as CookieRecord)
       const { taskId, payload } = body
-      return JiraService.createWorklog(credentials, taskId, payload)
+      return controller.create(cookie as CookieRecord, taskId, payload)
     },
     {
       body: t.Object({
@@ -30,16 +24,11 @@ export const worklogRoutes = new Elysia({ prefix: '/worklog' })
       },
     }
   )
-
-  /**
-   * Update an existing worklog
-   */
   .put(
     '/',
     async ({ body, cookie }) => {
-      const credentials = getCredentialsFromCookie(cookie as CookieRecord)
       const { issueKey, worklogId, payload } = body
-      return JiraService.updateWorklog(credentials, issueKey, worklogId, payload)
+      return controller.update(cookie as CookieRecord, issueKey, worklogId, payload)
     },
     {
       body: t.Object({
@@ -54,16 +43,11 @@ export const worklogRoutes = new Elysia({ prefix: '/worklog' })
       },
     }
   )
-
-  /**
-   * Delete a worklog
-   */
   .delete(
     '/',
     async ({ body, cookie }) => {
-      const credentials = getCredentialsFromCookie(cookie as CookieRecord)
       const { issueKey, worklogId } = body
-      return JiraService.deleteWorklog(credentials, issueKey, worklogId)
+      return controller.delete(cookie as CookieRecord, issueKey, worklogId)
     },
     {
       body: t.Object({
@@ -77,16 +61,11 @@ export const worklogRoutes = new Elysia({ prefix: '/worklog' })
       },
     }
   )
-
-  /**
-   * Get worklog history for a date range
-   */
   .post(
     '/history',
     async ({ body, cookie }) => {
-      const credentials = getCredentialsFromCookie(cookie as CookieRecord)
       const { startDate, endDate } = body
-      return JiraService.getWorklogHistory(credentials, startDate, endDate)
+      return controller.getHistory(cookie as CookieRecord, startDate, endDate)
     },
     {
       body: t.Object({

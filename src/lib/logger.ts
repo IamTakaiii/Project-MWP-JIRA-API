@@ -1,9 +1,6 @@
 import pino, { type LoggerOptions } from 'pino'
 import { env } from '@/config'
 
-/**
- * Pino logger instance configured for the environment
- */
 const loggerOptions: LoggerOptions = {
   level: env.LOG_LEVEL,
   base: {
@@ -15,7 +12,6 @@ const loggerOptions: LoggerOptions = {
   },
 }
 
-// Add transport for development
 if (env.isDev) {
   loggerOptions.transport = {
     target: 'pino-pretty',
@@ -29,9 +25,6 @@ if (env.isDev) {
 
 export const logger = pino(loggerOptions)
 
-/**
- * Create a child logger with a specific context
- */
 export function createLogger(context: string) {
   return logger.child({ context })
 }
