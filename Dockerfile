@@ -1,5 +1,7 @@
 FROM oven/bun:1.1-alpine AS builder
 
+RUN apk add --no-cache python3 make g++ gcc
+
 WORKDIR /app
 
 COPY package.json bun.lockb* ./
