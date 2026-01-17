@@ -1,4 +1,4 @@
-FROM oven/bun:1.1-alpine AS builder
+FROM oven/bun:1.2-alpine AS builder
 
 RUN apk add --no-cache python3 make g++ gcc
 
@@ -12,7 +12,7 @@ COPY . .
 
 RUN bun run typecheck
 
-FROM oven/bun:1.1-alpine AS production
+FROM oven/bun:1.2-alpine AS production
 
 RUN apk add --no-cache curl && \
     addgroup -g 1001 -S nodejs && \
