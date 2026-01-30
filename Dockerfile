@@ -30,15 +30,16 @@ COPY --from=builder /app/drizzle ./drizzle
 # Create data directory with proper permissions BEFORE switching user
 RUN mkdir -p /app/data && \
     touch /app/data/sessions.db && \
-    chown -R elysia:nodejs /app/data && \
-    chmod 755 /app/data && \
-    chmod 644 /app/data/sessions.db
+    chown -R elysia:nodejs /app && \
+    chmod 777 /app/data && \
+    chmod 666 /app/data/sessions.db
 
 USER elysia
 
 ENV NODE_ENV=production
 ENV PORT=3001
 ENV HOST=0.0.0.0
+ENV DATABASE_URL=file:/app/data/sessions.db
 
 EXPOSE 3001
 
