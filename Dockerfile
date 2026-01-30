@@ -27,12 +27,8 @@ COPY --from=builder /app/tsconfig.json ./
 COPY --from=builder /app/drizzle.config.ts ./
 COPY --from=builder /app/drizzle ./drizzle
 
-# Create data directory with proper permissions BEFORE switching user
-RUN mkdir -p /app/data && \
-    touch /app/data/sessions.db && \
-    chown -R elysia:nodejs /app && \
-    chmod 777 /app/data && \
-    chmod 666 /app/data/sessions.db
+# Create data directory - the actual db file should come from volume mount
+RUN mkdir -p /app/data && chown -R elysia:nodejs /app
 
 USER elysia
 
@@ -43,7 +39,11 @@ ENV DATABASE_URL=file:/app/data/sessions.db
 
 EXPOSE 3001
 
+# Volume for persistent data - mount this in your deployment platform
+VOLUME ["/app/data"]
+
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
   CMD curl -f http://localhost:3001/api/health/live || exit 1
 
-CMD ["sh", "-c", "bun run db:migrate && bun run src/index.ts"]
+# Create db file if not exists, then migrate and start
+CMD ["sh", "-c", "touch /app/data/sessions.db && bun run db:migrate && bun run src/index.ts"]
