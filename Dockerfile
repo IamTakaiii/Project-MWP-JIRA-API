@@ -27,7 +27,12 @@ COPY --from=builder /app/tsconfig.json ./
 COPY --from=builder /app/drizzle.config.ts ./
 COPY --from=builder /app/drizzle ./drizzle
 
-RUN mkdir -p /app/data && chown -R elysia:nodejs /app
+# Create data directory with proper permissions BEFORE switching user
+RUN mkdir -p /app/data && \
+    touch /app/data/sessions.db && \
+    chown -R elysia:nodejs /app/data && \
+    chmod 755 /app/data && \
+    chmod 644 /app/data/sessions.db
 
 USER elysia
 
