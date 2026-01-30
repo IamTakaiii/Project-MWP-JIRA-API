@@ -1,5 +1,5 @@
-import pino, { type LoggerOptions } from 'pino'
 import { env } from '@/config'
+import pino, { type LoggerOptions } from 'pino'
 
 const loggerOptions: LoggerOptions = {
   level: env.LOG_LEVEL,

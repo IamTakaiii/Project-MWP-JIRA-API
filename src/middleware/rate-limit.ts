@@ -1,10 +1,8 @@
-import { Elysia } from 'elysia'
 import { env } from '@/config'
 import { RateLimitError } from '@/lib'
-
+import { Elysia } from 'elysia'
 
 const rateLimitStore = new Map<string, { count: number; resetTime: number }>()
-
 
 setInterval(() => {
   const now = Date.now()
@@ -14,7 +12,6 @@ setInterval(() => {
     }
   }
 }, 60_000)
-
 
 function getClientId(request: Request): string {
   // Try to get real IP from headers (for proxied requests)
@@ -31,9 +28,8 @@ function getClientId(request: Request): string {
   return 'unknown'
 }
 
-
-export const rateLimitMiddleware = new Elysia({ name: 'rate-limit' })
-  .onBeforeHandle(({ request, set }) => {
+export const rateLimitMiddleware = new Elysia({ name: 'rate-limit' }).onBeforeHandle(
+  ({ request, set }) => {
     const clientId = getClientId(request)
     const now = Date.now()
 
@@ -53,14 +49,13 @@ export const rateLimitMiddleware = new Elysia({ name: 'rate-limit' })
     set.headers['X-RateLimit-Limit'] = env.RATE_LIMIT_MAX_REQUESTS.toString()
     set.headers['X-RateLimit-Remaining'] = Math.max(
       0,
-      env.RATE_LIMIT_MAX_REQUESTS - entry.count
+      env.RATE_LIMIT_MAX_REQUESTS - entry.count,
     ).toString()
     set.headers['X-RateLimit-Reset'] = Math.ceil(entry.resetTime / 1000).toString()
 
     if (entry.count > env.RATE_LIMIT_MAX_REQUESTS) {
-      set.headers['Retry-After'] = Math.ceil(
-        (entry.resetTime - now) / 1000
-      ).toString()
+      set.headers['Retry-After'] = Math.ceil((entry.resetTime - now) / 1000).toString()
       throw new RateLimitError()
     }
-  })
+  },
+)

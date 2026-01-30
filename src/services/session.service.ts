@@ -1,194 +1,138 @@
-import { createLogger } from '@/lib'
 import { randomBytes } from 'crypto'
-import type { JiraCredentials } from '@/types'
 import { env } from '@/config'
-import { db, sessions, type Session } from '@/db'
-import { eq, or, lt, sql } from 'drizzle-orm'
-import type { SessionInfo } from '@/types/services/session.types'
+import { type Session, db, sessions } from '@/db'
+import { createLogger } from '@/lib'
+import type { JiraCredentials, SessionInfo } from '@/types'
+import { eq, lt, or, sql } from 'drizzle-orm'
 
 const log = createLogger('SessionService')
 
-const SESSION_TTL_MS = env.SESSION_TTL_DAYS * 24 * 60 * 60 * 1000
-const SESSION_IDLE_TIMEOUT_MS = env.SESSION_IDLE_DAYS * 24 * 60 * 60 * 1000
-const SESSION_ID_LENGTH = 32
-const CLEANUP_INTERVAL_MS = 60 * 60 * 1000
+const SESSION_TTL_MS = env.SESSION_TTL_DAYS * 86400000
+const SESSION_IDLE_MS = env.SESSION_IDLE_DAYS * 86400000
+const CLEANUP_INTERVAL_MS = 3600000
 
-log.info('Session service initialized with Drizzle ORM')
+log.info('Session service initialized')
 
-class SessionRepository {
-  async create(sessionId: string, credentials: JiraCredentials, timestamp: Date): Promise<void> {
-    await db.insert(sessions)
-      .values({
-        sessionId,
-        jiraUrl: credentials.jiraUrl,
-        email: credentials.email,
-        apiToken: credentials.apiToken,
-        createdAt: timestamp,
-        lastAccessed: timestamp,
-      })
-  }
+// Repository functions
+async function findSession(sessionId: string): Promise<Session | undefined> {
+  return db.select().from(sessions).where(eq(sessions.sessionId, sessionId)).get()
+}
 
-  async findById(sessionId: string): Promise<Session | undefined> {
-    return db.select()
-      .from(sessions)
-      .where(eq(sessions.sessionId, sessionId))
-      .get()
-  }
+async function createSessionRecord(
+  sessionId: string,
+  credentials: JiraCredentials,
+  now: Date,
+): Promise<void> {
+  await db.insert(sessions).values({
+    sessionId,
+    jiraUrl: credentials.jiraUrl,
+    email: credentials.email,
+    apiToken: credentials.apiToken,
+    createdAt: now,
+    lastAccessed: now,
+  })
+}
 
-  async updateLastAccessed(sessionId: string, timestamp: Date): Promise<void> {
-    await db.update(sessions)
-      .set({ lastAccessed: timestamp })
-      .where(eq(sessions.sessionId, sessionId))
-  }
+async function updateLastAccessed(sessionId: string, now: Date): Promise<void> {
+  await db.update(sessions).set({ lastAccessed: now }).where(eq(sessions.sessionId, sessionId))
+}
 
-  async delete(sessionId: string): Promise<void> {
-    await db.delete(sessions)
-      .where(eq(sessions.sessionId, sessionId))
-  }
+async function deleteSessionRecord(sessionId: string): Promise<void> {
+  await db.delete(sessions).where(eq(sessions.sessionId, sessionId))
+}
 
-  async deleteExpired(maxIdleTime: Date, maxAge: Date): Promise<number> {
-    const beforeCount = await this.count()
+async function cleanupExpiredSessions(): Promise<void> {
+  const now = Date.now()
+  const maxIdleTime = new Date(now - SESSION_IDLE_MS)
+  const maxAge = new Date(now - SESSION_TTL_MS)
 
-    await db.delete(sessions)
-      .where(
-        or(
-          lt(sessions.lastAccessed, maxIdleTime),
-          lt(sessions.createdAt, maxAge)
-        )
-      )
+  const beforeCount =
+    (await db.select({ count: sql<number>`count(*)` }).from(sessions).get())?.count ?? 0
 
-    return beforeCount - await this.count()
-  }
+  await db
+    .delete(sessions)
+    .where(or(lt(sessions.lastAccessed, maxIdleTime), lt(sessions.createdAt, maxAge)))
 
-  async count(): Promise<number> {
-    const result = await db.select({ count: sql<number>`count(*)` })
-      .from(sessions)
-      .get()
-    return result?.count ?? 0
+  const afterCount =
+    (await db.select({ count: sql<number>`count(*)` }).from(sessions).get())?.count ?? 0
+
+  const cleaned = beforeCount - afterCount
+  if (cleaned > 0) {
+    log.debug({ cleaned }, 'Cleaned up expired sessions')
   }
 }
 
-class SessionValidator {
-  isExpired(session: Session, now: number): boolean {
-    const idleTime = now - session.lastAccessed.getTime()
-    const totalAge = now - session.createdAt.getTime()
-    return idleTime > SESSION_IDLE_TIMEOUT_MS || totalAge > SESSION_TTL_MS
+function isSessionExpired(session: Session, now: number): boolean {
+  const idleTime = now - session.lastAccessed.getTime()
+  const totalAge = now - session.createdAt.getTime()
+  return idleTime > SESSION_IDLE_MS || totalAge > SESSION_TTL_MS
+}
+
+async function getValidSession(sessionId: string): Promise<Session | null> {
+  const session = await findSession(sessionId)
+  if (!session) return null
+
+  const now = Date.now()
+
+  if (isSessionExpired(session, now)) {
+    await deleteSessionRecord(sessionId)
+    log.debug({ sessionId }, 'Session expired')
+    return null
+  }
+
+  await updateLastAccessed(sessionId, new Date(now))
+  return session
+}
+
+// Public API
+export async function createSession(credentials: JiraCredentials): Promise<string> {
+  const sessionId = randomBytes(32).toString('hex')
+  const now = new Date()
+
+  await createSessionRecord(sessionId, credentials, now)
+  log.info({ sessionId, jiraUrl: credentials.jiraUrl, email: credentials.email }, 'Session created')
+
+  return sessionId
+}
+
+export async function getCredentials(sessionId: string): Promise<JiraCredentials | null> {
+  const session = await getValidSession(sessionId)
+  if (!session) return null
+
+  return {
+    jiraUrl: session.jiraUrl,
+    email: session.email,
+    apiToken: session.apiToken,
   }
 }
 
-class SessionMapper {
-  toCredentials(session: Session): JiraCredentials {
-    return {
-      jiraUrl: session.jiraUrl,
-      email: session.email,
-      apiToken: session.apiToken,
-    }
-  }
+export async function deleteSession(sessionId: string): Promise<void> {
+  await deleteSessionRecord(sessionId)
+  log.info({ sessionId }, 'Session deleted')
+}
 
-  toSessionInfo(session: Session, now: number): SessionInfo {
-    return {
-      createdAt: session.createdAt.getTime(),
-      lastAccessed: session.lastAccessed.getTime(),
-      age: now - session.createdAt.getTime(),
-      idleTime: now - session.lastAccessed.getTime(),
-    }
+export async function hasSession(sessionId: string): Promise<boolean> {
+  return (await getValidSession(sessionId)) !== null
+}
+
+export async function getSessionInfo(sessionId: string): Promise<SessionInfo | null> {
+  const session = await findSession(sessionId)
+  if (!session) return null
+
+  const now = Date.now()
+  return {
+    createdAt: session.createdAt.getTime(),
+    lastAccessed: session.lastAccessed.getTime(),
+    age: now - session.createdAt.getTime(),
+    idleTime: now - session.lastAccessed.getTime(),
   }
 }
 
-class SessionIdGenerator {
-  generate(): string {
-    return randomBytes(SESSION_ID_LENGTH).toString('hex')
-  }
+export async function getSessionCount(): Promise<number> {
+  const result = await db.select({ count: sql<number>`count(*)` }).from(sessions).get()
+  return result?.count ?? 0
 }
 
-class SessionManager {
-  constructor(
-    private repository: SessionRepository,
-    private validator: SessionValidator,
-    private mapper: SessionMapper,
-    private idGenerator: SessionIdGenerator
-  ) {}
-
-  async createSession(credentials: JiraCredentials): Promise<string> {
-    const sessionId = this.idGenerator.generate()
-    const now = new Date()
-
-    await this.repository.create(sessionId, credentials, now)
-
-    log.info(
-      { sessionId, jiraUrl: credentials.jiraUrl, email: credentials.email },
-      'Session created'
-    )
-
-    return sessionId
-  }
-
-  async getCredentials(sessionId: string): Promise<JiraCredentials | null> {
-    const session = await this.getValidSession(sessionId)
-    return session ? this.mapper.toCredentials(session) : null
-  }
-
-  async deleteSession(sessionId: string): Promise<void> {
-    await this.repository.delete(sessionId)
-    log.info({ sessionId }, 'Session deleted')
-  }
-
-  async hasSession(sessionId: string): Promise<boolean> {
-    return (await this.getValidSession(sessionId)) !== null
-  }
-
-  async getSessionInfo(sessionId: string): Promise<SessionInfo | null> {
-    const session = await this.repository.findById(sessionId)
-    return session ? this.mapper.toSessionInfo(session, Date.now()) : null
-  }
-
-  async getSessionCount(): Promise<number> {
-    return this.repository.count()
-  }
-
-  async cleanupExpired(): Promise<void> {
-    const now = Date.now()
-    const maxIdleTime = new Date(now - SESSION_IDLE_TIMEOUT_MS)
-    const maxAge = new Date(now - SESSION_TTL_MS)
-
-    const cleaned = await this.repository.deleteExpired(maxIdleTime, maxAge)
-
-    if (cleaned > 0) {
-      log.debug({ cleaned }, 'Cleaned up expired sessions')
-    }
-  }
-
-  private async getValidSession(sessionId: string): Promise<Session | null> {
-    const session = await this.repository.findById(sessionId)
-    if (!session) return null
-
-    const now = Date.now()
-
-    if (this.validator.isExpired(session, now)) {
-      await this.repository.delete(sessionId)
-      log.debug({ sessionId }, 'Session expired')
-      return null
-    }
-
-    await this.repository.updateLastAccessed(sessionId, new Date(now))
-    return session
-  }
-}
-
-const repository = new SessionRepository()
-const validator = new SessionValidator()
-const mapper = new SessionMapper()
-const idGenerator = new SessionIdGenerator()
-const manager = new SessionManager(repository, validator, mapper, idGenerator)
-
-manager.cleanupExpired()
-setInterval(() => manager.cleanupExpired(), CLEANUP_INTERVAL_MS)
-
-export const SessionService = {
-  createSession: (credentials: JiraCredentials) => manager.createSession(credentials),
-  getCredentials: (sessionId: string) => manager.getCredentials(sessionId),
-  deleteSession: (sessionId: string) => manager.deleteSession(sessionId),
-  hasSession: (sessionId: string) => manager.hasSession(sessionId),
-  getSessionInfo: (sessionId: string) => manager.getSessionInfo(sessionId),
-  getSessionCount: () => manager.getSessionCount(),
-}
+// Start cleanup interval
+cleanupExpiredSessions()
+setInterval(cleanupExpiredSessions, CLEANUP_INTERVAL_MS)

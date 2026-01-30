@@ -1,6 +1,6 @@
-import { Elysia } from 'elysia'
-import { AppError, isErrorLike } from '@/lib'
 import { env } from '@/config'
+import { AppError, isErrorLike } from '@/lib'
+import { Elysia } from 'elysia'
 
 interface ErrorResponse {
   success: false
@@ -16,7 +16,7 @@ function buildErrorResponse(
   code: string,
   message: string,
   details?: unknown,
-  stack?: string
+  stack?: string,
 ): ErrorResponse {
   return {
     success: false,
@@ -54,7 +54,7 @@ export const errorHandlerMiddleware = new Elysia({ name: 'error-handler' }).onEr
         error.code,
         error.message,
         error.details,
-        env.isDev ? error.stack : undefined
+        env.isDev ? error.stack : undefined,
       )
     }
 
@@ -71,7 +71,7 @@ export const errorHandlerMiddleware = new Elysia({ name: 'error-handler' }).onEr
       return buildErrorResponse(
         'VALIDATION_ERROR',
         'Request validation failed',
-        env.isDev ? error.message : undefined
+        env.isDev ? error.message : undefined,
       )
     }
 
@@ -81,7 +81,7 @@ export const errorHandlerMiddleware = new Elysia({ name: 'error-handler' }).onEr
       'INTERNAL_ERROR',
       env.isProd ? 'An unexpected error occurred' : error.message,
       undefined,
-      env.isDev ? error.stack : undefined
+      env.isDev ? error.stack : undefined,
     )
-  }
+  },
 )

@@ -1,11 +1,9 @@
-import { JiraService } from '@/services'
-import { getCredentialsFromCookie } from '@/middleware'
 import type { CookieRecord } from '@/lib/cookie'
-import type { TaskSearchOptions } from '@/types/controllers/task.types'
+import { getCredentialsFromCookie } from '@/middleware'
+import { JiraService } from '@/services'
+import type { TaskSearchOptions } from '@/types'
 
-export class TaskController {
-  async searchMyTasks(cookie: CookieRecord, options: TaskSearchOptions) {
-    const credentials = await getCredentialsFromCookie(cookie)
-    return JiraService.searchMyTasks(credentials, options)
-  }
+export async function searchMyTasks(cookie: CookieRecord, options: TaskSearchOptions) {
+  const credentials = await getCredentialsFromCookie(cookie)
+  return JiraService.searchMyTasks(credentials, options)
 }

@@ -1,6 +1,5 @@
+import { isErrorLike, logger } from '@/lib'
 import { Elysia } from 'elysia'
-import { logger, isErrorLike } from '@/lib'
-
 
 const requestTimings = new WeakMap<Request, number>()
 
@@ -12,7 +11,7 @@ export const loggingMiddleware = new Elysia({ name: 'logging' })
         method: request.method,
         url: request.url,
       },
-      'Incoming request'
+      'Incoming request',
     )
   })
   .onAfterResponse(({ request, response }) => {
@@ -27,7 +26,7 @@ export const loggingMiddleware = new Elysia({ name: 'logging' })
         status,
         duration: `${duration}ms`,
       },
-      'Request completed'
+      'Request completed',
     )
   })
   .onError(({ request, error }) => {
@@ -45,6 +44,6 @@ export const loggingMiddleware = new Elysia({ name: 'logging' })
         stack: errorStack,
         duration: `${duration}ms`,
       },
-      'Request error'
+      'Request error',
     )
   })

@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, index } from 'drizzle-orm/sqlite-core'
+import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
 
 export const sessions = sqliteTable(
   'sessions',
@@ -12,7 +12,7 @@ export const sessions = sqliteTable(
   },
   (table) => ({
     lastAccessedIdx: index('idx_sessions_last_accessed').on(table.lastAccessed),
-  })
+  }),
 )
 
 export type Session = typeof sessions.$inferSelect

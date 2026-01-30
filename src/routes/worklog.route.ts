@@ -1,81 +1,77 @@
-import { Elysia, t } from 'elysia'
-import { WorklogPayloadSchema } from '@/types'
-import type { CookieRecord } from '@/lib/cookie'
 import { WorklogController } from '@/controllers'
+import type { CookieRecord } from '@/lib/cookie'
+import { WorklogPayloadSchema } from '@/types'
+import { Elysia, t } from 'elysia'
 
-const controller = new WorklogController()
+const DatePattern = '^\\d{4}-\\d{2}-\\d{2}$'
 
 export const worklogRoutes = new Elysia({ prefix: '/worklog' })
   .post(
     '/',
-    async ({ body, cookie }) => {
-      const { taskId, payload } = body
-      return controller.create(cookie as CookieRecord, taskId, payload)
-    },
+    ({ body, cookie }) =>
+      WorklogController.create(cookie as CookieRecord, body.taskId, body.payload),
     {
       body: t.Object({
         taskId: t.String({ minLength: 1 }),
         payload: WorklogPayloadSchema,
       }),
-      detail: {
-        summary: 'Create worklog',
-        description: 'Create a new worklog entry for a Jira issue',
-        tags: ['Worklog'],
-      },
-    }
+      detail: { summary: 'Create worklog', tags: ['Worklog'] },
+    },
   )
   .put(
     '/',
-    async ({ body, cookie }) => {
-      const { issueKey, worklogId, payload } = body
-      return controller.update(cookie as CookieRecord, issueKey, worklogId, payload)
-    },
+    ({ body, cookie }) =>
+      WorklogController.update(cookie as CookieRecord, body.issueKey, body.worklogId, body.payload),
     {
       body: t.Object({
         issueKey: t.String({ minLength: 1 }),
         worklogId: t.String({ minLength: 1 }),
         payload: WorklogPayloadSchema,
       }),
-      detail: {
-        summary: 'Update worklog',
-        description: 'Update an existing worklog entry',
-        tags: ['Worklog'],
-      },
-    }
+      detail: { summary: 'Update worklog', tags: ['Worklog'] },
+    },
   )
   .delete(
     '/',
-    async ({ body, cookie }) => {
-      const { issueKey, worklogId } = body
-      return controller.delete(cookie as CookieRecord, issueKey, worklogId)
-    },
+    ({ body, cookie }) =>
+      WorklogController.remove(cookie as CookieRecord, body.issueKey, body.worklogId),
     {
       body: t.Object({
         issueKey: t.String({ minLength: 1 }),
         worklogId: t.String({ minLength: 1 }),
       }),
-      detail: {
-        summary: 'Delete worklog',
-        description: 'Delete a worklog entry',
-        tags: ['Worklog'],
-      },
-    }
+      detail: { summary: 'Delete worklog', tags: ['Worklog'] },
+    },
   )
   .post(
     '/history',
-    async ({ body, cookie }) => {
-      const { startDate, endDate } = body
-      return controller.getHistory(cookie as CookieRecord, startDate, endDate)
-    },
+    ({ body, cookie }) =>
+      WorklogController.getHistory(cookie as CookieRecord, body.startDate, body.endDate),
     {
       body: t.Object({
-        startDate: t.String({ pattern: '^\\d{4}-\\d{2}-\\d{2}$' }),
-        endDate: t.String({ pattern: '^\\d{4}-\\d{2}-\\d{2}$' }),
+        startDate: t.String({ pattern: DatePattern }),
+        endDate: t.String({ pattern: DatePattern }),
       }),
-      detail: {
-        summary: 'Get worklog history',
-        description: 'Get all worklogs for the current user within a date range',
-        tags: ['Worklog'],
-      },
-    }
+      detail: { summary: 'Get worklog history', tags: ['Worklog'] },
+    },
+  )
+  .post(
+    '/epic-report',
+    ({ body, cookie }) => WorklogController.getEpicReport(cookie as CookieRecord, body.epicKey),
+    {
+      body: t.Object({ epicKey: t.String({ minLength: 1 }) }),
+      detail: { summary: 'Get Epic worklog report', tags: ['Worklog'] },
+    },
+  )
+  .post(
+    '/active-epics',
+    ({ body, cookie }) =>
+      WorklogController.getActiveEpics(cookie as CookieRecord, body.startDate, body.endDate),
+    {
+      body: t.Object({
+        startDate: t.String({ pattern: DatePattern }),
+        endDate: t.String({ pattern: DatePattern }),
+      }),
+      detail: { summary: 'Get Active Epics', tags: ['Worklog'] },
+    },
   )

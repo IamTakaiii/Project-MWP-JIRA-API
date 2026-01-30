@@ -1,6 +1,6 @@
-import { createLogger, AuthenticationError } from '@/lib'
-import { getSessionIdFromCookie, type CookieRecord } from '@/lib/cookie'
-import { SessionService } from '@/services/session.service'
+import { AuthenticationError, createLogger } from '@/lib'
+import { type CookieRecord, getSessionIdFromCookie } from '@/lib/cookie'
+import * as SessionService from '@/services/session.service'
 import type { JiraCredentials } from '@/types'
 
 const log = createLogger('AuthMiddleware')
@@ -8,10 +8,13 @@ const log = createLogger('AuthMiddleware')
 export async function getCredentialsFromCookie(cookie: CookieRecord): Promise<JiraCredentials> {
   const sessionId = getSessionIdFromCookie(cookie)
 
-  log.debug({
-    sessionId: sessionId ? 'present' : 'missing',
-    cookieKeys: Object.keys(cookie || {}),
-  }, 'Getting credentials from cookie')
+  log.debug(
+    {
+      sessionId: sessionId ? 'present' : 'missing',
+      cookieKeys: Object.keys(cookie || {}),
+    },
+    'Getting credentials from cookie',
+  )
 
   if (!sessionId) {
     log.warn('No session ID found in cookies')
@@ -24,10 +27,13 @@ export async function getCredentialsFromCookie(cookie: CookieRecord): Promise<Ji
     throw new AuthenticationError('Session expired. Please login again.')
   }
 
-  log.debug({
-    jiraUrl: credentials.jiraUrl,
-    email: credentials.email,
-  }, 'Credentials validated successfully')
+  log.debug(
+    {
+      jiraUrl: credentials.jiraUrl,
+      email: credentials.email,
+    },
+    'Credentials validated successfully',
+  )
 
   return credentials
 }
