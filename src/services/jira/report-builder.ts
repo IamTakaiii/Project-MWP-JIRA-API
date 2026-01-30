@@ -147,7 +147,7 @@ function aggregateWorklogs(
         userMap.set(accountId, {
           accountId,
           displayName,
-          emailAddress,
+          ...(emailAddress && { emailAddress }),
           totalTimeSeconds: 0,
           issues: [],
         })
