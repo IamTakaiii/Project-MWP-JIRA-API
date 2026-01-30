@@ -203,6 +203,7 @@ export async function exportMonthlyReport(report: MonthlyReport): Promise<Buffer
     { header: 'Epic Key', key: 'epicKey', width: 15 },
     { header: 'Epic Summary', key: 'epicSummary', width: 35 },
     { header: 'User', key: 'user', width: 25 },
+    { header: 'Email', key: 'email', width: 30 },
     { header: 'Issue Key', key: 'issueKey', width: 15 },
     { header: 'Issue Summary', key: 'issueSummary', width: 40 },
     { header: 'Time Spent', key: 'timeSpent', width: 12 },
@@ -223,6 +224,7 @@ export async function exportMonthlyReport(report: MonthlyReport): Promise<Buffer
           epicKey: epic.epicKey || '(No Epic)',
           epicSummary: epic.epicSummary,
           user: user.displayName,
+          email: user.emailAddress || '',
           issueKey: issue.issueKey,
           issueSummary: issue.issueSummary,
           timeSpent: formatDuration(issue.timeSpentSeconds),
@@ -238,25 +240,26 @@ export async function exportMonthlyReport(report: MonthlyReport): Promise<Buffer
     const epicSheet = workbook.addWorksheet(sheetName)
     
     // Epic header info
-    epicSheet.mergeCells('A1:E1')
+    epicSheet.mergeCells('A1:F1')
     const titleCell = epicSheet.getCell('A1')
     titleCell.value = `${epic.epicKey || 'No Epic'}: ${epic.epicSummary}`
     titleCell.font = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } }
     titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4472C4' } }
 
-    epicSheet.mergeCells('A2:E2')
+    epicSheet.mergeCells('A2:F2')
     const totalCell = epicSheet.getCell('A2')
     totalCell.value = `Total: ${formatDuration(epic.totalTimeSeconds)} (${Math.round((epic.totalTimeSeconds / 3600) * 100) / 100} hours)`
     totalCell.font = { bold: true }
 
     // Data starts at row 4
-    epicSheet.getRow(4).values = ['User', 'Issue Key', 'Issue Summary', 'Time Spent', 'Hours']
+    epicSheet.getRow(4).values = ['User', 'Email', 'Issue Key', 'Issue Summary', 'Time Spent', 'Hours']
     applyHeaderStyle(epicSheet.getRow(4))
     epicSheet.getColumn(1).width = 25
-    epicSheet.getColumn(2).width = 15
-    epicSheet.getColumn(3).width = 40
-    epicSheet.getColumn(4).width = 12
-    epicSheet.getColumn(5).width = 10
+    epicSheet.getColumn(2).width = 30
+    epicSheet.getColumn(3).width = 15
+    epicSheet.getColumn(4).width = 40
+    epicSheet.getColumn(5).width = 12
+    epicSheet.getColumn(6).width = 10
 
     // Sort users by total time (descending)
     const sortedUsers = [...epic.users].sort((a, b) => b.totalTimeSeconds - a.totalTimeSeconds)
@@ -267,6 +270,7 @@ export async function exportMonthlyReport(report: MonthlyReport): Promise<Buffer
       const userRow = epicSheet.getRow(rowNum)
       userRow.values = [
         user.displayName,
+        user.emailAddress || '',
         '',
         `Subtotal: ${user.issues.length} issues`,
         formatDuration(user.totalTimeSeconds),
@@ -282,6 +286,7 @@ export async function exportMonthlyReport(report: MonthlyReport): Promise<Buffer
       // Issue rows
       for (const issue of sortedIssues) {
         epicSheet.getRow(rowNum).values = [
+          '',
           '',
           issue.issueKey,
           issue.issueSummary,

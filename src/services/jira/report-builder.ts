@@ -141,12 +141,13 @@ function aggregateWorklogs(
       const wlMs = new Date(wl.started).getTime()
       if (wlMs < ctx.startMs || wlMs > ctx.endMs) continue
 
-      const { accountId, displayName = 'Unknown' } = wl.author
+      const { accountId, displayName = 'Unknown', emailAddress } = wl.author
 
       if (!userMap.has(accountId)) {
         userMap.set(accountId, {
           accountId,
           displayName,
+          emailAddress,
           totalTimeSeconds: 0,
           issues: [],
         })

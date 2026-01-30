@@ -128,6 +128,7 @@ export interface MonthlyIssueWorklog {
 export interface MonthlyUserEpicWorklog {
   accountId: string
   displayName: string
+  emailAddress?: string
   totalTimeSeconds: number
   issues: MonthlyIssueWorklog[]
 }
