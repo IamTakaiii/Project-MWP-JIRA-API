@@ -21,6 +21,7 @@
     "@libsql/client": "^0.17.0",
     "drizzle-orm": "^0.45.1",
     "elysia": "^1.1.0",
+    "exceljs": "^4.4.0",
     "pino": "^9.0.0",
     "pino-pretty": "^11.0.0"
   },

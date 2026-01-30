@@ -1,4 +1,4 @@
-import { ExternalServiceError, createLogger } from '@/lib'
+import { createLogger } from '@/lib'
 import type {
   ActiveEpic,
   EpicWorklogReport,
@@ -6,126 +6,55 @@ import type {
   JiraIssue,
   JiraUser,
   JiraWorklogEntry,
+  MonthlyReport,
   TaskSearchOptions,
   UserWorklogSummary,
   WorklogItem,
   WorklogPayload,
 } from '@/types'
+import {
+  buildApiUrl,
+  request,
+  processBatch,
+  getCachedUser,
+  setCachedUser,
+  getCachedReport,
+  setCachedReport,
+  getReportCacheKey,
+  getCachedProjects,
+  setCachedProjects,
+  getCachedBoards,
+  setCachedBoards,
+  createReportContext,
+  fetchIssuesByEpics,
+  fetchWorklogsForIssues,
+  buildEpicReports,
+  createMonthlyReport,
+  type EpicInfo,
+} from './jira'
 
 const log = createLogger('JiraService')
-
-const CONCURRENCY = 6
 const MAX_RESULTS = 100
 const MS_PER_DAY = 86400000
-const USER_CACHE_TTL = 300000
 
-// User cache
-const userCache = new Map<string, { user: JiraUser; timestamp: number }>()
+// ============================================================================
+// User & Auth
+// ============================================================================
 
-function getCacheKey(creds: JiraCredentials): string {
-  return `${creds.jiraUrl}:${creds.email}`
-}
-
-// HTTP helpers
-function buildAuthHeader(email: string, apiToken: string): string {
-  return `Basic ${Buffer.from(`${email}:${apiToken}`).toString('base64')}`
-}
-
-function buildApiUrl(baseUrl: string, path: string): string {
-  return `${baseUrl.replace(/\/$/, '')}/rest/api/3${path}`
-}
-
-async function request<T>(
-  url: string,
-  method: string,
-  credentials: JiraCredentials,
-  body?: unknown,
-): Promise<T> {
-  const response = await fetch(url, {
-    method,
-    headers: {
-      Authorization: buildAuthHeader(credentials.email, credentials.apiToken),
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  })
-
-  const text = await response.text()
-
-  if (!response.ok) {
-    log.warn({ url, status: response.status }, 'Jira API error')
-    throw new ExternalServiceError('Jira API', response.status, text)
-  }
-
-  return text ? JSON.parse(text) : ({} as T)
-}
-
-// Batch processing
-async function processBatch<T, R>(
-  items: T[],
-  fn: (item: T) => Promise<R>,
-  batchSize = CONCURRENCY,
-): Promise<R[]> {
-  const results: R[] = []
-  for (let i = 0; i < items.length; i += batchSize) {
-    const batch = await Promise.all(items.slice(i, i + batchSize).map(fn))
-    results.push(...batch)
-  }
-  return results
-}
-
-// JQL builders
-function buildTaskSearchJql(options: TaskSearchOptions): string {
-  const parts = ['assignee = currentUser()']
-  if (options.status && options.status !== 'all') {
-    parts.push(`status = "${options.status}"`)
-  }
-  if (options.searchText?.trim()) {
-    const escaped = options.searchText.trim().replace(/"/g, '\\"')
-    parts.push(`(summary ~ "${escaped}" OR key ~ "${escaped}")`)
-  }
-  return `${parts.join(' AND ')} ORDER BY updated DESC`
-}
-
-// Worklog helpers
-function extractComment(comment?: JiraWorklogEntry['comment']): string {
-  return comment?.content?.[0]?.content?.[0]?.text || ''
-}
-
-function toWorklogItem(worklog: JiraWorklogEntry, issue: JiraIssue): WorklogItem {
-  const author = worklog.author?.displayName || worklog.author?.emailAddress
-  return {
-    id: worklog.id,
-    issueKey: issue.key,
-    issueSummary: issue.fields.summary,
-    projectKey: issue.fields.project?.key,
-    author,
-    authorAccountId: worklog.author?.accountId,
-    timeSpent: worklog.timeSpent,
-    timeSpentSeconds: worklog.timeSpentSeconds,
-    started: worklog.started!,
-    comment: extractComment(worklog.comment),
-    created: worklog.created,
-    updated: worklog.updated,
-  }
-}
-
-// Service methods
 export async function getCurrentUser(credentials: JiraCredentials): Promise<JiraUser> {
-  const cacheKey = getCacheKey(credentials)
-  const cached = userCache.get(cacheKey)
-
-  if (cached && Date.now() - cached.timestamp < USER_CACHE_TTL) {
-    return cached.user
-  }
+  const cached = getCachedUser(credentials)
+  if (cached) return cached
 
   const url = buildApiUrl(credentials.jiraUrl, '/myself')
   const user = await request<JiraUser>(url, 'GET', credentials)
-  userCache.set(cacheKey, { user, timestamp: Date.now() })
+  setCachedUser(credentials, user)
 
   return user
 }
+
+// ============================================================================
+// Task Search
+// ============================================================================
 
 export async function searchMyTasks(
   credentials: JiraCredentials,
@@ -142,6 +71,22 @@ export async function searchMyTasks(
 
   return { issues: response.issues || [], total: response.total || 0 }
 }
+
+function buildTaskSearchJql(options: TaskSearchOptions): string {
+  const parts = ['assignee = currentUser()']
+  if (options.status && options.status !== 'all') {
+    parts.push(`status = "${options.status}"`)
+  }
+  if (options.searchText?.trim()) {
+    const escaped = options.searchText.trim().replace(/"/g, '\\"')
+    parts.push(`(summary ~ "${escaped}" OR key ~ "${escaped}")`)
+  }
+  return `${parts.join(' AND ')} ORDER BY updated DESC`
+}
+
+// ============================================================================
+// Worklog CRUD
+// ============================================================================
 
 export async function createWorklog(
   credentials: JiraCredentials,
@@ -175,6 +120,10 @@ export async function deleteWorklog(
   return { success: true }
 }
 
+// ============================================================================
+// Worklog History
+// ============================================================================
+
 export async function getWorklogHistory(
   credentials: JiraCredentials,
   startDate: string,
@@ -186,7 +135,6 @@ export async function getWorklogHistory(
   const startMs = new Date(startDate).getTime()
   const endMs = new Date(endDate).getTime() + MS_PER_DAY
 
-  // Search issues with worklogs
   const jql = `worklogAuthor = currentUser() AND worklogDate >= ${startDate} AND worklogDate <= ${endDate} ORDER BY updated DESC`
   const url = buildApiUrl(credentials.jiraUrl, '/search/jql')
 
@@ -202,7 +150,6 @@ export async function getWorklogHistory(
     return { worklogs: [], totalIssues: 0 }
   }
 
-  // Fetch worklogs for each issue
   const worklogArrays = await processBatch(issues, async (issue) => {
     const worklogUrl = buildApiUrl(
       credentials.jiraUrl,
@@ -210,12 +157,7 @@ export async function getWorklogHistory(
     )
 
     try {
-      const response = await request<{ worklogs: JiraWorklogEntry[] }>(
-        worklogUrl,
-        'GET',
-        credentials,
-      )
-
+      const response = await request<{ worklogs: JiraWorklogEntry[] }>(worklogUrl, 'GET', credentials)
       return (response.worklogs || [])
         .filter((wl) => {
           if (!wl.started) return false
@@ -237,6 +179,27 @@ export async function getWorklogHistory(
   return { worklogs, totalIssues: issues.length }
 }
 
+function toWorklogItem(worklog: JiraWorklogEntry, issue: JiraIssue): WorklogItem {
+  return {
+    id: worklog.id,
+    issueKey: issue.key,
+    issueSummary: issue.fields.summary,
+    projectKey: issue.fields.project?.key,
+    author: worklog.author?.displayName || worklog.author?.emailAddress,
+    authorAccountId: worklog.author?.accountId,
+    timeSpent: worklog.timeSpent,
+    timeSpentSeconds: worklog.timeSpentSeconds,
+    started: worklog.started!,
+    comment: worklog.comment?.content?.[0]?.content?.[0]?.text || '',
+    created: worklog.created,
+    updated: worklog.updated,
+  }
+}
+
+// ============================================================================
+// Epic Report
+// ============================================================================
+
 export async function getEpicWorklogReport(
   credentials: JiraCredentials,
   epicKey: string,
@@ -257,7 +220,6 @@ export async function getEpicWorklogReport(
   let totalSeconds = 0
   const heavyIssues: JiraIssue[] = []
 
-  // Process embedded worklogs
   for (const issue of issues) {
     const worklogData = issue.fields.worklog
     if (!worklogData) continue
@@ -270,7 +232,6 @@ export async function getEpicWorklogReport(
     }
   }
 
-  // Fetch full worklogs for heavy issues
   if (heavyIssues.length > 0) {
     await processBatch(heavyIssues, async (issue) => {
       const worklogUrl = buildApiUrl(credentials.jiraUrl, `/issue/${issue.key}/worklog`)
@@ -311,6 +272,10 @@ function processWorklogs(
   }
 }
 
+// ============================================================================
+// Active Epics
+// ============================================================================
+
 export async function getActiveEpics(
   credentials: JiraCredentials,
   startDate: string,
@@ -344,4 +309,380 @@ export async function getActiveEpics(
   }
 
   return Array.from(epicMap.values()).sort((a, b) => b.issuesCount - a.issuesCount)
+}
+
+
+// ============================================================================
+// Monthly Reports (unified implementation)
+// ============================================================================
+
+export async function getMonthlyReport(
+  credentials: JiraCredentials,
+  startDate: string,
+  endDate: string,
+): Promise<MonthlyReport> {
+  const cacheKey = getReportCacheKey(credentials, 'my', 'epics', startDate, endDate)
+  const cached = getCachedReport(cacheKey)
+  if (cached) {
+    log.info({ cached: true }, 'Monthly report from cache')
+    return cached
+  }
+
+  log.info({ startDate, endDate }, 'Generating monthly report')
+  const ctx = createReportContext(credentials, startDate, endDate)
+
+  // Find epics user worked on
+  const epics = await findUserEpics(credentials, startDate, endDate)
+  if (epics.length === 0) {
+    return createMonthlyReport(ctx, [], 0)
+  }
+
+  const report = await buildReportForEpics(ctx, epics)
+  setCachedReport(cacheKey, report)
+  return report
+}
+
+export async function getMonthlyReportByProject(
+  credentials: JiraCredentials,
+  projectKey: string,
+  startDate: string,
+  endDate: string,
+): Promise<MonthlyReport> {
+  const cacheKey = getReportCacheKey(credentials, 'project', projectKey, startDate, endDate)
+  const cached = getCachedReport(cacheKey)
+  if (cached) {
+    log.info({ projectKey, cached: true }, 'Monthly report by project from cache')
+    return cached
+  }
+
+  log.info({ projectKey, startDate, endDate }, 'Generating monthly report by project')
+  const ctx = createReportContext(credentials, startDate, endDate)
+
+  // Find all epics in project
+  const epics = await findProjectEpics(credentials, projectKey)
+  if (epics.length === 0) {
+    return createMonthlyReport(ctx, [], 0)
+  }
+
+  const report = await buildReportForEpics(ctx, epics)
+  setCachedReport(cacheKey, report)
+  return report
+}
+
+export async function getMonthlyReportByBoard(
+  credentials: JiraCredentials,
+  boardId: number,
+  startDate: string,
+  endDate: string,
+): Promise<MonthlyReport> {
+  const cacheKey = getReportCacheKey(credentials, 'board', boardId, startDate, endDate)
+  const cached = getCachedReport(cacheKey)
+  if (cached) {
+    log.info({ boardId, cached: true }, 'Monthly report by board from cache')
+    return cached
+  }
+
+  log.info({ boardId, startDate, endDate }, 'Generating monthly report by board')
+  const ctx = createReportContext(credentials, startDate, endDate)
+
+  // Find issues with worklogs in board
+  const { epics, issues } = await findBoardIssuesWithWorklogs(credentials, boardId, startDate, endDate)
+  if (epics.length === 0) {
+    return createMonthlyReport(ctx, [], 0)
+  }
+
+  // Group issues by epic
+  const issuesByEpic = new Map<string, JiraIssue[]>()
+  for (const issue of issues) {
+    const epicKey = issue.fields.parent?.key
+    if (!epicKey) continue
+    if (!issuesByEpic.has(epicKey)) {
+      issuesByEpic.set(epicKey, [])
+    }
+    issuesByEpic.get(epicKey)!.push(issue)
+  }
+
+  // Fetch worklogs and build report
+  const worklogsByIssue = await fetchWorklogsForIssues(ctx, issues, 25)
+  const { reports, totalSeconds } = buildEpicReports(ctx, epics, issuesByEpic, worklogsByIssue)
+
+  log.info({ boardId, epics: reports.length, totalIssues: issues.length }, 'Monthly report by board generated')
+
+  const report = createMonthlyReport(ctx, reports, totalSeconds)
+  setCachedReport(cacheKey, report)
+  return report
+}
+
+// Helper: build report for given epics
+async function buildReportForEpics(
+  ctx: ReturnType<typeof createReportContext>,
+  epics: EpicInfo[],
+): Promise<MonthlyReport> {
+  const epicKeys = epics.map(e => e.epicKey)
+  const issuesByEpic = await fetchIssuesByEpics(ctx, epicKeys)
+
+  const allIssues = Array.from(issuesByEpic.values()).flat()
+  const worklogsByIssue = await fetchWorklogsForIssues(ctx, allIssues, 10)
+
+  const { reports, totalSeconds } = buildEpicReports(ctx, epics, issuesByEpic, worklogsByIssue)
+
+  log.info({ epics: reports.length, totalIssues: allIssues.length }, 'Monthly report generated')
+  return createMonthlyReport(ctx, reports, totalSeconds)
+}
+
+// Helper: find epics user worked on
+async function findUserEpics(
+  credentials: JiraCredentials,
+  startDate: string,
+  endDate: string,
+): Promise<EpicInfo[]> {
+  const jql = `worklogAuthor = currentUser() AND worklogDate >= "${startDate}" AND worklogDate <= "${endDate}" ORDER BY updated DESC`
+  const url = buildApiUrl(credentials.jiraUrl, '/search/jql')
+
+  const response = await request<{ issues: JiraIssue[] }>(url, 'POST', credentials, {
+    jql,
+    fields: ['key', 'summary', 'parent', 'project'],
+    maxResults: MAX_RESULTS,
+  })
+
+  const epics: EpicInfo[] = []
+  const seen = new Set<string>()
+
+  for (const issue of response.issues || []) {
+    const parent = issue.fields.parent
+    if (parent?.key && !seen.has(parent.key)) {
+      seen.add(parent.key)
+      epics.push({
+        epicKey: parent.key,
+        epicSummary: parent.fields?.summary || parent.key,
+      })
+    }
+  }
+
+  return epics
+}
+
+// Helper: find all epics in project
+async function findProjectEpics(
+  credentials: JiraCredentials,
+  projectKey: string,
+): Promise<EpicInfo[]> {
+  const jql = `project = "${projectKey}" AND issuetype = Epic ORDER BY created DESC`
+  const url = buildApiUrl(credentials.jiraUrl, '/search/jql')
+
+  const response = await request<{ issues: JiraIssue[] }>(url, 'POST', credentials, {
+    jql,
+    fields: ['key', 'summary'],
+    maxResults: MAX_RESULTS,
+  })
+
+  return (response.issues || []).map(epic => ({
+    epicKey: epic.key,
+    epicSummary: epic.fields.summary,
+  }))
+}
+
+// Helper: find board issues with worklogs
+async function findBoardIssuesWithWorklogs(
+  credentials: JiraCredentials,
+  boardId: number,
+  startDate: string,
+  endDate: string,
+): Promise<{ epics: EpicInfo[]; issues: JiraIssue[] }> {
+  const baseUrl = credentials.jiraUrl.replace(/\/$/, '')
+
+  // Get board filter
+  let boardFilter: string | undefined
+  try {
+    const configUrl = `${baseUrl}/rest/agile/1.0/board/${boardId}/configuration`
+    const config = await request<{ filter?: { id: string } }>(configUrl, 'GET', credentials)
+    boardFilter = config.filter?.id
+  } catch {
+    log.warn({ boardId }, 'Could not get board configuration')
+  }
+
+  // Build JQL
+  let jql: string
+  if (boardFilter) {
+    jql = `filter = ${boardFilter} AND worklogDate >= "${startDate}" AND worklogDate <= "${endDate}" ORDER BY updated DESC`
+  } else {
+    const boardInfoUrl = `${baseUrl}/rest/agile/1.0/board/${boardId}`
+    const boardInfo = await request<{ location?: { projectKey?: string } }>(boardInfoUrl, 'GET', credentials)
+    const projectKey = boardInfo.location?.projectKey
+
+    if (!projectKey) {
+      log.warn({ boardId }, 'Board has no filter or project')
+      return { epics: [], issues: [] }
+    }
+    jql = `project = "${projectKey}" AND worklogDate >= "${startDate}" AND worklogDate <= "${endDate}" ORDER BY updated DESC`
+  }
+
+  // Fetch issues with pagination
+  const searchUrl = buildApiUrl(credentials.jiraUrl, '/search/jql')
+  const allIssues: JiraIssue[] = []
+  let nextPageToken: string | undefined
+
+  do {
+    const body: Record<string, unknown> = {
+      jql,
+      fields: ['key', 'summary', 'parent'],
+      maxResults: 100,
+    }
+    if (nextPageToken) {
+      body['nextPageToken'] = nextPageToken
+    }
+
+    const response = await request<{ issues: JiraIssue[]; nextPageToken?: string }>(
+      searchUrl,
+      'POST',
+      credentials,
+      body,
+    )
+
+    allIssues.push(...(response.issues || []))
+    nextPageToken = response.nextPageToken
+  } while (nextPageToken)
+
+  log.info({ boardId, issuesWithWorklogs: allIssues.length }, 'Found issues with worklogs in date range')
+
+  // Extract epics
+  const epicMap = new Map<string, EpicInfo>()
+  for (const issue of allIssues) {
+    const parent = issue.fields.parent
+    if (parent?.key && !epicMap.has(parent.key)) {
+      epicMap.set(parent.key, {
+        epicKey: parent.key,
+        epicSummary: parent.fields?.summary || parent.key,
+      })
+    }
+  }
+
+  return { epics: Array.from(epicMap.values()), issues: allIssues }
+}
+
+// ============================================================================
+// Projects & Boards
+// ============================================================================
+
+export async function getMyProjects(
+  credentials: JiraCredentials,
+): Promise<{ key: string; name: string }[]> {
+  const cached = getCachedProjects(credentials)
+  if (cached) {
+    log.info({ count: cached.length, cached: true }, 'Projects fetched from cache')
+    return cached
+  }
+
+  log.info('Fetching user projects')
+
+  const projects = await fetchAllPages<{ key: string; name: string }>(
+    credentials,
+    '/project/search',
+    (item) => ({ key: item.key, name: item.name }),
+  )
+
+  const sorted = projects.sort((a, b) => a.key.localeCompare(b.key))
+  setCachedProjects(credentials, sorted)
+
+  log.info({ count: sorted.length }, 'Projects fetched')
+  return sorted
+}
+
+export async function getBoards(
+  credentials: JiraCredentials,
+): Promise<{ id: number; name: string; projectKey?: string }[]> {
+  const cached = getCachedBoards(credentials)
+  if (cached) {
+    log.info({ count: cached.length, cached: true }, 'Boards fetched from cache')
+    return cached
+  }
+
+  log.info('Fetching boards')
+
+  const baseUrl = credentials.jiraUrl.replace(/\/$/, '')
+  const boards = await fetchAllPagesAgile<{ id: number; name: string; projectKey?: string }>(
+    credentials,
+    baseUrl,
+    '/board',
+    (item) => ({
+      id: item.id,
+      name: item.name,
+      ...(item.location?.projectKey && { projectKey: item.location.projectKey }),
+    }),
+  )
+
+  const sorted = boards.sort((a, b) => a.name.localeCompare(b.name))
+  setCachedBoards(credentials, sorted)
+
+  log.info({ count: sorted.length }, 'Boards fetched')
+  return sorted
+}
+
+// Generic pagination helper for REST API v3
+async function fetchAllPages<T>(
+  credentials: JiraCredentials,
+  path: string,
+  transform: (item: any) => T,
+): Promise<T[]> {
+  const firstUrl = buildApiUrl(credentials.jiraUrl, `${path}?startAt=0&maxResults=100`)
+  const firstResponse = await request<{ values: any[]; total: number }>(firstUrl, 'GET', credentials)
+
+  const results: T[] = firstResponse.values.map(transform)
+  const total = firstResponse.total
+
+  if (results.length < total) {
+    const pages: number[] = []
+    for (let startAt = 100; startAt < total; startAt += 100) {
+      pages.push(startAt)
+    }
+
+    const pageResults = await Promise.all(
+      pages.map(async (startAt) => {
+        const url = buildApiUrl(credentials.jiraUrl, `${path}?startAt=${startAt}&maxResults=100`)
+        const response = await request<{ values: any[] }>(url, 'GET', credentials)
+        return response.values.map(transform)
+      }),
+    )
+
+    for (const page of pageResults) {
+      results.push(...page)
+    }
+  }
+
+  return results
+}
+
+// Generic pagination helper for Agile API
+async function fetchAllPagesAgile<T>(
+  credentials: JiraCredentials,
+  baseUrl: string,
+  path: string,
+  transform: (item: any) => T,
+): Promise<T[]> {
+  const firstUrl = `${baseUrl}/rest/agile/1.0${path}?startAt=0&maxResults=100`
+  const firstResponse = await request<{ values: any[]; total: number }>(firstUrl, 'GET', credentials)
+
+  const results: T[] = firstResponse.values.map(transform)
+  const total = firstResponse.total
+
+  if (results.length < total) {
+    const pages: number[] = []
+    for (let startAt = 100; startAt < total; startAt += 100) {
+      pages.push(startAt)
+    }
+
+    const pageResults = await Promise.all(
+      pages.map(async (startAt) => {
+        const url = `${baseUrl}/rest/agile/1.0${path}?startAt=${startAt}&maxResults=100`
+        const response = await request<{ values: any[] }>(url, 'GET', credentials)
+        return response.values.map(transform)
+      }),
+    )
+
+    for (const page of pageResults) {
+      results.push(...page)
+    }
+  }
+
+  return results
 }

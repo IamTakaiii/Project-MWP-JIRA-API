@@ -118,6 +118,34 @@ export interface ActiveEpic {
   issuesCount: number
 }
 
+// Monthly Report Types
+export interface MonthlyIssueWorklog {
+  issueKey: string
+  issueSummary: string
+  timeSpentSeconds: number
+}
+
+export interface MonthlyUserEpicWorklog {
+  accountId: string
+  displayName: string
+  totalTimeSeconds: number
+  issues: MonthlyIssueWorklog[]
+}
+
+export interface MonthlyEpicReport {
+  epicKey: string
+  epicSummary: string
+  totalTimeSeconds: number
+  users: MonthlyUserEpicWorklog[]
+}
+
+export interface MonthlyReport {
+  startDate: string
+  endDate: string
+  totalTimeSeconds: number
+  epics: MonthlyEpicReport[]
+}
+
 export type MeResponse =
   | { authenticated: false }
   | { authenticated: true; jiraUrl: string; email: string; sessionInfo: SessionInfo | null }
